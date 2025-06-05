@@ -6,6 +6,7 @@ package com.smsa.smsa.service;
 
 import com.smsa.smsa.entity.User;
 import com.smsa.smsa.repository.UserRepository;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -27,74 +28,61 @@ public class UserExportService {
     public String exportUsersToZip(String folderPath) throws IOException {
         List<User> users = userRepository.findAll();
 
-        final int MAX_ROWS_PER_FILE = 50; // Adjust based on approx file size
-
-        // Create temp directory to save multiple XLSX files
+        // Create temp folder
         File tempDir = new File(folderPath, "temp_xls");
-        if (!tempDir.exists()) {
-            tempDir.mkdirs();
+        if (!tempDir.exists()) tempDir.mkdirs();
+
+        int fileCount = 1;
+        Workbook workbook = createWorkbookWithHeaders();
+        Sheet sheet = workbook.getSheetAt(0);
+        int rowNum = 1;
+
+        for (User user : users) {
+            Row row = sheet.createRow(rowNum++);
+            row.createCell(0).setCellValue(user.getId());
+            row.createCell(1).setCellValue(user.getUsername());
+            row.createCell(2).setCellValue(user.getEmail());
+            row.createCell(3).setCellValue(user.getPassword());
+            row.createCell(4).setCellValue(user.getCreatedAt().toString());
+            row.createCell(5).setCellValue(user.getUpdatedAt().toString());
+
+            // Estimate size after each row
+            ByteArrayOutputStream tempOut = new ByteArrayOutputStream();
+            workbook.write(tempOut);
+            int currentSize = tempOut.toByteArray().length;
+            tempOut.close();
+
+            if (currentSize >= 4096) {
+                saveWorkbook(workbook, new File(tempDir, "users_part_" + fileCount + ".xlsx"));
+                fileCount++;
+                workbook.close();
+                workbook = createWorkbookWithHeaders();
+                sheet = workbook.getSheetAt(0);
+                rowNum = 1;
+            }
         }
 
-        int fileCount = 0;
-        int startIndex = 0;
-
-        while (startIndex < users.size()) {
-            int endIndex = Math.min(startIndex + MAX_ROWS_PER_FILE, users.size());
-            List<User> subList = users.subList(startIndex, endIndex);
-
-            Workbook workbook = new XSSFWorkbook();
-            Sheet sheet = workbook.createSheet("Users");
-
-            // Header rowww
-            Row header = sheet.createRow(0);
-            String[] headers = {"ID", "Username", "Email", "Password", "Created At", "Updated At"};
-            for (int i = 0; i < headers.length; i++) {
-                header.createCell(i).setCellValue(headers[i]);
-            }
-
-            // Data rows
-            int rowNum = 1;
-            for (User user : subList) {
-                Row row = sheet.createRow(rowNum++);
-                row.createCell(0).setCellValue(user.getId());
-                row.createCell(1).setCellValue(user.getUsername());
-                row.createCell(2).setCellValue(user.getEmail());
-                row.createCell(3).setCellValue(user.getPassword());
-                row.createCell(4).setCellValue(user.getCreatedAt().toString());
-                row.createCell(5).setCellValue(user.getUpdatedAt().toString());
-            }
-
-            // Auto-size columns
-            for (int i = 0; i < headers.length; i++) {
-                sheet.autoSizeColumn(i);
-            }
-
-            String fileName = "users_part_" + (++fileCount) + ".xlsx";
-            File xlsFile = new File(tempDir, fileName);
-            try (FileOutputStream fos = new FileOutputStream(xlsFile)) {
-                workbook.write(fos);
-            }
+        // Save last workbook if it has remaining rows
+        if (rowNum > 1) {
+            saveWorkbook(workbook, new File(tempDir, "users_part_" + fileCount + ".xlsx"));
             workbook.close();
-
-            startIndex = endIndex;
         }
 
-        // Create ZIP file containing all XLSX files
+        // Create ZIP file
         String zipFilePath = folderPath + "/users_export.zip";
         try (FileOutputStream fos = new FileOutputStream(zipFilePath);
              ZipOutputStream zos = new ZipOutputStream(fos)) {
 
-            File[] xlsFiles = tempDir.listFiles((dir, name) -> name.endsWith(".xlsx"));
-            if (xlsFiles != null) {
-                for (File file : xlsFiles) {
+            File[] files = tempDir.listFiles((dir, name) -> name.endsWith(".xlsx"));
+            if (files != null) {
+                for (File file : files) {
                     try (FileInputStream fis = new FileInputStream(file)) {
-                        ZipEntry zipEntry = new ZipEntry(file.getName());
-                        zos.putNextEntry(zipEntry);
-
+                        ZipEntry entry = new ZipEntry(file.getName());
+                        zos.putNextEntry(entry);
                         byte[] buffer = new byte[1024];
-                        int length;
-                        while ((length = fis.read(buffer)) > 0) {
-                            zos.write(buffer, 0, length);
+                        int len;
+                        while ((len = fis.read(buffer)) > 0) {
+                            zos.write(buffer, 0, len);
                         }
                         zos.closeEntry();
                     }
@@ -102,16 +90,31 @@ public class UserExportService {
             }
         }
 
-        // Cleanup temporary XLS files and folder
+        // Cleanup
         File[] tempFiles = tempDir.listFiles();
         if (tempFiles != null) {
-            for (File file : tempFiles) {
-                file.delete();
-            }
+            for (File f : tempFiles) f.delete();
         }
         tempDir.delete();
 
         return zipFilePath;
+    }
+
+    private Workbook createWorkbookWithHeaders() {
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Users");
+        String[] headers = {"ID", "Username", "Email", "Password", "Created At", "Updated At"};
+        Row headerRow = sheet.createRow(0);
+        for (int i = 0; i < headers.length; i++) {
+            headerRow.createCell(i).setCellValue(headers[i]);
+        }
+        return workbook;
+    }
+
+    private void saveWorkbook(Workbook workbook, File file) throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            workbook.write(fos);
+        }
     }
 }
 
