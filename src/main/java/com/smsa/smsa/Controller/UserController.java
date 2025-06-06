@@ -7,10 +7,16 @@ package com.smsa.smsa.Controller;
 import com.smsa.smsa.entity.User;
 import com.smsa.smsa.service.UserExportService;
 import com.smsa.smsa.service.UserService;
+
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -64,14 +70,28 @@ public class UserController {
     private UserExportService exportService;
 
     @GetMapping("/export")
-    public ResponseEntity<String> exportUsersToExcel() {
-        try {
-            String path = "C:/files"; // or "/tmp/users.xlsx" on Linux
-            String file = exportService.exportUsersToZip(path);
-            return ResponseEntity.ok("zip file created at: " + file);
-        } catch (IOException e) {
-            return ResponseEntity.status(500).body("zip failed: " + e.getMessage());
+public ResponseEntity<InputStreamResource> exportUsersToExcel() {
+    try {
+        String path = System.getProperty("java.io.tmpdir"); // safer across OS
+        String filePath = exportService.exportUsersToZip(path);
+        File zipFile = new File(filePath);
+
+        if (!zipFile.exists()) {
+            return ResponseEntity.status(404).build();
         }
+
+        InputStreamResource resource = new InputStreamResource(new FileInputStream(zipFile));
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=users_export.zip")
+                .contentLength(zipFile.length())
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(resource);
+
+    } catch (IOException e) {
+        return ResponseEntity.status(500).build();
     }
+}
+
 
 }
